@@ -3,6 +3,8 @@ package impl
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"strings"
 )
 
 const (
@@ -128,4 +130,98 @@ func (node BNode) WriteKV(idx uint16, key []byte, val []byte) {
 	copy(node[pos+4:pos+4+lKey], key)
 	valPos := pos + 4 + lKey
 	copy(node[valPos:valPos+lVal], val)
+}
+
+// insert keys into leafs
+// 1. Get the position to insert using NodeLookupLE
+// 2. Copy the keys into a new node and insert the new key (cope-on-write strategy)
+func LeafInsert(new BNode, old BNode, idx uint16, key []byte, val []byte) {
+	new.SetHeader(BNODE_LEAF, old.Nkeys()+1)
+	NodeAppendRange(new, old, 0, 0, idx)
+	NodeAppendKV(new, idx, 0, key, val)
+	NodeAppendRange(new, old, idx+1, idx, old.Nkeys()-idx)
+}
+
+func NodeAppendKV(new BNode, idx uint16, ptr uint64, key []byte, val []byte) {
+	new.SetPtr(idx, ptr)
+	pos := new.KvPos(idx)
+	lKey := uint16(len(key))
+	lVal := uint16(len(val))
+	binary.LittleEndian.PutUint16(new[pos:], lKey)
+	binary.LittleEndian.PutUint16(new[pos+2:], lVal)
+	copy(new[pos+4:], key)
+	copy(new[pos+4+lKey:], val)
+	new.SetOffset(idx+1, new.GetOffset(idx)+4+uint16((len(key)+len(val))))
+}
+
+// copy multiple KVs into the position from the old node
+func NodeAppendRange(new BNode, old BNode, dstNew uint16, srcOld uint16, n uint16) {
+	if n == 0 {
+		return
+	}
+	for i := uint16(0); i < n; i++ {
+		new.SetPtr(dstNew+i, old.GetPtr(srcOld+i))
+	}
+	beginOld := old.KvPos(srcOld)
+	endOld := old.KvPos(srcOld + n)
+	copy(new[new.KvPos(dstNew):], old[beginOld:endOld])
+	baseOffset := new.GetOffset(dstNew)
+	for i := uint16(1); i <= n; i++ {
+		oldRelativeOffset := old.GetOffset(srcOld+i) - old.GetOffset(srcOld)
+		new.SetOffset(dstNew+i, baseOffset+oldRelativeOffset)
+	}
+}
+
+// node printer
+func (node BNode) DumpNode() {
+	nkeys := node.Nkeys()
+	btype := node.Btype()
+
+	typeName := "INTERNAL"
+	if btype == BNODE_LEAF {
+		typeName = "LEAF"
+	}
+
+	fmt.Println(strings.Repeat("=", 60))
+	fmt.Printf(" NODE DUMP (%s) | Keys: %d | Total Size: %d bytes\n", typeName, nkeys, node.Nbytes())
+	fmt.Println(strings.Repeat("=", 60))
+
+	// 1. HEADER (Bytes 0-4)
+	fmt.Printf("[00-04] HEADER:  Type=%d, NKeys=%d\n", btype, nkeys)
+
+	// 2. POINTERS (8 bytes cada uno, empiezan en byte 4)
+	ptrStart := uint16(4)
+	fmt.Printf("[%02d-%02d] PTRS:   ", ptrStart, ptrStart+(nkeys*8))
+	for i := uint16(0); i < nkeys; i++ {
+		fmt.Printf("[%d: %d] ", i, node.GetPtr(i))
+	}
+	fmt.Println()
+
+	// 3. OFFSETS (2 bytes cada uno, después de los punteros)
+	offStart := 4 + (nkeys * 8)
+	fmt.Printf("[%02d-%02d] OFFSETS: ", offStart, offStart+(nkeys*2))
+	for i := uint16(1); i <= nkeys; i++ {
+		fmt.Printf("[%d: %d] ", i, node.GetOffset(i))
+	}
+	fmt.Println()
+
+	// 4. DATA (KV Pairs)
+	fmt.Println(strings.Repeat("-", 60))
+	fmt.Printf("%-10s | %-8s | %-8s | %-20s\n", "POSITION", "KLEN/VLEN", "INDEX", "CONTENT (Key:Val)")
+	fmt.Println(strings.Repeat("-", 60))
+
+	for i := uint16(0); i < nkeys; i++ {
+		pos := node.KvPos(i)
+
+		// Leemos klen/vlen directamente del slice para verificar integridad
+		klen := binary.LittleEndian.Uint16(node[pos : pos+2])
+		vlen := binary.LittleEndian.Uint16(node[pos+2 : pos+4])
+
+		key := string(node.GetKey(i))
+		val := string(node.GetVal(i))
+
+		fmt.Printf("Byte %-5d | %d / %-5d | Idx %-3d | %s : %s\n",
+			pos, klen, vlen, i, key, val)
+	}
+	fmt.Println(strings.Repeat("=", 60))
 }

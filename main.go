@@ -15,45 +15,39 @@ func main() {
 	// SaveData2(path, data2)
 
 	// Create an empty node with 4KB space
-	node := impl.BNode(make([]byte, impl.BTREE_PAGE_SIZE))
+	oldNode := impl.BNode(make([]byte, impl.BTREE_PAGE_SIZE))
+	oldNode.SetHeader(impl.BNODE_LEAF, 4)
 
-	// Configure the header: LEAF NODE WITH 2 KEYS
-	node.SetHeader(impl.BNODE_LEAF, 2)
+	k1, v1 := []byte("berry"), []byte("blue")       // 4 + 5 + 4 = 13 bytes
+	k2, v2 := []byte("dragonfruit"), []byte("pink") // 4 + 11 + 4 = 19 bytes
+	k3, v3 := []byte("fig"), []byte("purple")       // 4 + 3 + 6 = 13 bytes
+	k4, v4 := []byte("grape"), []byte("green")      // 4 + 5 + 5 = 14 bytes
 
-	// Testing Key-Values pairs
-	key1, val1 := []byte("apple"), []byte("red")
-	key2, val2 := []byte("banana"), []byte("yellow")
+	// OFFSET MANUAL SETUP
+	// Offset 0 is always 0
+	oldNode.SetOffset(1, 13)
+	oldNode.SetOffset(2, 13+19)
+	oldNode.SetOffset(3, 32+13)
+	oldNode.SetOffset(4, 45+14)
 
-	// Add offsets manually
-	// KV1: klen(2B) + vlen(2B) + key(5B) + val(3B) = 12B
-	node.SetOffset(1, 12)
-	// KV2: offset_1 + klen(2B) + vlen(2B) + key(6B) + val(6B) = 12B + 16B = 28B
-	node.SetOffset(2, 28)
+	// MANUAL WRITE OF BYTES
+	oldNode.WriteKV(0, k1, v1)
+	oldNode.WriteKV(1, k2, v2)
+	oldNode.WriteKV(2, k3, v3)
+	oldNode.WriteKV(3, k4, v4)
 
-	// Write real values on the node body
-	node.WriteKV(0, key1, val1)
-	node.WriteKV(1, key2, val2)
+	fmt.Println("ORIGINAL NODE (MANUAL SETUP)")
+	oldNode.DumpNode()
 
-	// TEST
-	fmt.Printf("Node type: %d\n", node.Btype())
-	fmt.Printf("Number of keys: %d\n", node.Nkeys())
-	fmt.Printf("Keys node total size: %d bytes\n", node.Nbytes())
+	// Insert "cherry" : "red" at position 1
+	newKey, newVal := []byte("cherry"), []byte("red") // 4 + 6 + 3 = 13 bytes
+	targetIdx := uint16(1)
 
-	// Test getKey y getVal
-	fmt.Printf("KV 0: %s -> %s\n", node.GetKey(0), node.GetVal(0))
-	fmt.Printf("KV 1: %s -> %s\n", node.GetKey(1), node.GetVal(1))
+	newNode := impl.BNode(make([]byte, impl.BTREE_PAGE_SIZE))
+	impl.LeafInsert(newNode, oldNode, targetIdx, newKey, newVal)
 
-	// Test binary search
-	idx := impl.NodeLookupLE(node, []byte("apple"))
-	fmt.Printf("Looking 'apple': index %d\n", idx)
-
-	// Search for "azucar" (between apple and banana) -> should return 0
-	idx = impl.NodeLookupLE(node, []byte("banana"))
-	fmt.Printf("Looking 'azucar': index %d\n", idx)
-
-	// Search "cherry" (greather than banana) -> should return 1
-	idx = impl.NodeLookupLE(node, []byte("cherry"))
-	fmt.Printf("Looking 'cherry': index %d\n", idx)
+	fmt.Println("\nAFTER INSERTION")
+	newNode.DumpNode()
 }
 
 func SaveData(path string, data []byte) error {
