@@ -142,6 +142,18 @@ func LeafInsert(new BNode, old BNode, idx uint16, key []byte, val []byte) {
 	NodeAppendRange(new, old, idx+1, idx, old.Nkeys()-idx)
 }
 
+// insert into internal nodes
+func nodeReplaceKidN(tree *BTree, new BNode, old BNode, idx uint16, kids ...BNode) {
+	inc := uint16(len(kids))
+	new.SetHeader(BNODE_NODE, old.Nkeys()+inc-1)
+	NodeAppendRange(new, old, 0, 0, idx)
+	for i, node := range kids {
+		NodeAppendKV(new, idx+uint16(i), tree.new(node), node.GetKey(0), nil)
+
+	}
+	NodeAppendRange(new, old, idx+inc, idx+1, old.Nkeys()-(idx+1))
+}
+
 func NodeAppendKV(new BNode, idx uint16, ptr uint64, key []byte, val []byte) {
 	new.SetPtr(idx, ptr)
 	pos := new.KvPos(idx)
