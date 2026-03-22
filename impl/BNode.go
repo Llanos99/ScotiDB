@@ -143,7 +143,7 @@ func LeafInsert(new BNode, old BNode, idx uint16, key []byte, val []byte) {
 }
 
 // insert into internal nodes
-func nodeReplaceKidN(tree *BTree, new BNode, old BNode, idx uint16, kids ...BNode) {
+func NodeReplaceKidN(tree *BTree, new BNode, old BNode, idx uint16, kids ...BNode) {
 	inc := uint16(len(kids))
 	new.SetHeader(BNODE_NODE, old.Nkeys()+inc-1)
 	NodeAppendRange(new, old, 0, 0, idx)
@@ -182,6 +182,54 @@ func NodeAppendRange(new BNode, old BNode, dstNew uint16, srcOld uint16, n uint1
 		oldRelativeOffset := old.GetOffset(srcOld+i) - old.GetOffset(srcOld)
 		new.SetOffset(dstNew+i, baseOffset+oldRelativeOffset)
 	}
+}
+
+// split node into two new nodes ensuring 2nd node always fit in page (4096)
+func NodeSplit2(left BNode, right BNode, old BNode) {
+	nkeys := old.Nkeys()
+	splitIdx := nkeys
+	for i := uint16(1); i <= nkeys; i++ {
+		newSplitIdx := nkeys - i
+		size := _calculateSize(old, newSplitIdx)
+		if size > BTREE_PAGE_SIZE {
+			break
+		}
+		splitIdx = newSplitIdx
+	}
+	if splitIdx == nkeys {
+		splitIdx = nkeys - 1
+	}
+	left.SetHeader(old.Btype(), splitIdx)
+	NodeAppendRange(left, old, 0, 0, splitIdx)
+	right.SetHeader(old.Btype(), nkeys-splitIdx)
+	NodeAppendRange(right, old, 0, splitIdx, nkeys-splitIdx)
+}
+
+// split node if it's too big. It will be splited into 1~3 nodes
+func NodeSplit3(old BNode) (uint16, [3]BNode) {
+	// no split needed
+	if old.Nbytes() <= BTREE_PAGE_SIZE {
+		old = old[:BTREE_PAGE_SIZE]
+		return 1, [3]BNode{old}
+	}
+	left := BNode(make([]byte, 2*BTREE_PAGE_SIZE))
+	right := BNode(make([]byte, BTREE_PAGE_SIZE))
+	NodeSplit2(left, right, old)
+	if left.Nbytes() <= BTREE_PAGE_SIZE {
+		left = left[:BTREE_PAGE_SIZE]
+		return 2, [3]BNode{left, right}
+	}
+	newLeft := BNode(make([]byte, BTREE_PAGE_SIZE))
+	middle := BNode(make([]byte, BTREE_PAGE_SIZE))
+	NodeSplit2(newLeft, middle, left)
+	if newLeft.Nbytes() > BTREE_PAGE_SIZE {
+		panic(fmt.Sprintf(
+			"NodeSplit3: critical invariant violated. Remaining node size (%d bytes) "+
+				"exceeds page limit (%d bytes) after 2 splits. Check BTREE_MAX_KEY/VAL_SIZE limits.",
+			newLeft.Nbytes(), BTREE_PAGE_SIZE,
+		))
+	}
+	return 3, [3]BNode{newLeft, middle, right}
 }
 
 // node printer
@@ -236,4 +284,11 @@ func (node BNode) DumpNode() {
 			pos, klen, vlen, i, key, val)
 	}
 	fmt.Println(strings.Repeat("=", 60))
+}
+
+func _calculateSize(old BNode, splitIdx uint16) uint16 {
+	nKeysOld := old.Nkeys()
+	nKeysNew := nKeysOld - splitIdx
+	size := uint16(4) + (nKeysNew)*8 + (nKeysNew)*2 + (old.GetOffset(nKeysOld) - old.GetOffset(splitIdx))
+	return size
 }
