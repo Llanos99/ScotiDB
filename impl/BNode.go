@@ -142,6 +142,14 @@ func LeafInsert(new BNode, old BNode, idx uint16, key []byte, val []byte) {
 	NodeAppendRange(new, old, idx+1, idx, old.Nkeys()-idx)
 }
 
+// leafUpdate is similar to leafInsert; it updates an existing key instead of inserting a duplicate key.
+func LeafUpdate(new BNode, old BNode, idx uint16, key []byte, val []byte) {
+	new.SetHeader(BNODE_LEAF, old.Nkeys())
+	NodeAppendRange(new, old, 0, 0, idx)
+	NodeAppendKV(new, idx, 0, key, val)
+	NodeAppendRange(new, old, idx+1, idx+1, old.Nkeys()-(idx+1))
+}
+
 // insert into internal nodes
 func NodeReplaceKidN(tree *BTree, new BNode, old BNode, idx uint16, kids ...BNode) {
 	inc := uint16(len(kids))
@@ -230,6 +238,36 @@ func NodeSplit3(old BNode) (uint16, [3]BNode) {
 		))
 	}
 	return 3, [3]BNode{newLeft, middle, right}
+}
+
+func TreeInsert(tree *BTree, node BNode, key []byte, val []byte) BNode {
+	new := BNode(make([]byte, 2*BTREE_PAGE_SIZE)) // Initialize the BNode
+	idx := NodeLookupLE(node, key)                // Where to insert the key?
+	switch node.Btype() {
+	case BNODE_NODE:
+		NodeInsert(tree, new, node, idx, key, val)
+	case BNODE_LEAF:
+		// key found, update it
+		if bytes.Equal(key, node.GetKey(idx)) {
+			LeafUpdate(new, node, idx, key, val)
+		} else {
+			// key wasn't found, add it to the right of the found index
+			LeafInsert(new, node, idx+1, key, val)
+		}
+	default:
+		panic("Bad node, can't insert it to the B+Tree")
+	}
+	return new
+}
+
+func NodeInsert(tree *BTree, new BNode, node BNode, idx uint16, key []byte, val []byte) {
+	keyPointer := node.GetPtr(idx)
+	keyNode := TreeInsert(tree, tree.get(keyPointer), key, val) // recursive call
+	nsplit, split := NodeSplit3(keyNode)
+	// deallocate the split node
+	tree.del(keyPointer)
+	// update keys
+	NodeReplaceKidN(tree, new, node, idx, split[:nsplit]...)
 }
 
 // node printer
