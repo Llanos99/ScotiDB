@@ -19,3 +19,36 @@ func init() {
 		panic(1)
 	}
 }
+
+func (tree *BTree) Insert(key []byte, val []byte) {
+	// no KV has been added before
+	if tree.root == 0 {
+		root := BNode(make([]byte, BTREE_PAGE_SIZE))
+		root.SetHeader(BNODE_NODE, 2)
+		NodeAppendKV(root, 0, 0, nil, nil)
+		NodeAppendKV(root, 1, 0, key, val)
+		tree.root = tree.new(root)
+		return
+	}
+	// tree is not empty
+	node := TreeInsert(tree, tree.get(tree.root), key, val)
+	nsplit, split := NodeSplit3(node)
+	tree.del(tree.root)
+	if nsplit > 1 {
+		root := BNode(make([]byte, BTREE_PAGE_SIZE))
+		root.SetHeader(BNODE_NODE, nsplit)
+		for i, knode := range split[:nsplit] {
+			ptr, key := tree.new(knode), knode.GetKey(0)
+			// now root stores the pointers to the child nodes
+			NodeAppendKV(root, uint16(i), ptr, key, nil)
+		}
+		// BTree is now pointing to this new root
+		tree.root = tree.new(root)
+	} else {
+		tree.root = tree.new(split[0])
+	}
+}
+
+func (tree *BTree) Delete(key []byte) bool {
+	return false
+}
