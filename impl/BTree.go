@@ -50,5 +50,22 @@ func (tree *BTree) Insert(key []byte, val []byte) {
 }
 
 func (tree *BTree) Delete(key []byte) bool {
-	return false
+	if tree.root == 0 {
+		return false
+	}
+	updated := TreeDelete(tree, tree.get(tree.root), key)
+	if len(updated) == 0 {
+		return false // key not found
+	}
+	tree.del(tree.root)
+	if updated.Btype() == BNODE_NODE && updated.Nkeys() == 1 {
+		tree.root = updated.GetPtr(0)
+	} else if updated.Nkeys() == 0 {
+		tree.root = 0 // tree is completely empty
+	} else {
+		tree.root = tree.new(updated)
+	}
+	return true
 }
+
+// stop here, review all we've coded so far
